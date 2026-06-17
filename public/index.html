@@ -859,11 +859,11 @@
       try {
         if (editItem) {
           const row = rows[0];
+          // Upload image first so addInventoryItem/updateInventoryItem only needs ONE call
           let imageUrl = editItem.imageUrl || "";
           if (row.imageFile) {
             try { imageUrl = await uploadToGithub(row.imageFile, editItem.id, settings); } catch { toast("Image upload failed","info"); }
           }
-          // FIX: if Available Stock was left blank/0, default to ML/Bottle (1 bottle on hand)
           const mlPerBottle = +row.mlPerBottle || 750;
           const mlInStock = (row.mlInStock !== "" && row.mlInStock !== undefined && row.mlInStock !== null && +row.mlInStock !== 0)
             ? +row.mlInStock
@@ -873,25 +873,78 @@
           setInventory(p => p.map(i => i.id===editItem.id ? {...i,...payload} : i));
           toast("Item updated!","success");
         } else {
+          // Check each row against current inventory for an exact (trimmed, case-insensitive)
+          // name match BEFORE making any network calls, so we can ask the user up front
+          // instead of mid-save. This is what stops two items (e.g. "Jim Beam" / "JD")
+          // from ever being able to collide onto the same ID.
+          const normalize = s => String(s||"").trim().toLowerCase();
+          const existingByName = {};
+          inventory.forEach(i => { if (i.active) existingByName[normalize(i.name)] = i; });
+
+          const decisions = []; // one per row: {row, mode: "new" | "merge", mergeTarget}
           for (const row of rows) {
-            // FIX: if Available Stock was left blank/0, default to ML/Bottle (1 bottle on hand)
+            const match = existingByName[normalize(row.name)];
+            if (match) {
+              const mergeStock = confirm(
+                `"${row.name.trim()}" already exists (ID ${match.id}).\n\n` +
+                `OK = Update existing item (combine stock, replace other fields with what you entered)\n` +
+                `Cancel = Skip this row (don't create a duplicate)`
+              );
+              if (mergeStock) decisions.push({ row, mode: "merge", mergeTarget: match });
+              else decisions.push({ row, mode: "skip" });
+            } else {
+              decisions.push({ row, mode: "new" });
+            }
+          }
+
+          const toCreate = decisions.filter(d => d.mode === "new");
+          const toMerge  = decisions.filter(d => d.mode === "merge");
+          const skipped  = decisions.filter(d => d.mode === "skip").length;
+
+          // New items: upload image first, then ONE addInventoryItem call each — run in parallel.
+          const createResults = await Promise.all(toCreate.map(async ({ row }) => {
             const mlPerBottle = +row.mlPerBottle || 750;
             const mlInStock = (row.mlInStock !== "" && row.mlInStock !== undefined && row.mlInStock !== null && +row.mlInStock !== 0)
               ? +row.mlInStock
               : mlPerBottle;
-            const payload = {name:row.name.trim(),category:row.category,price30ml:+row.price30ml,priceBottle:+row.priceBottle,mlPerBottle,mlInStock,lowStockBottles:+row.lowStockBottles,imageUrl:""};
-            const res = await gasGet("addInventoryItem", payload);
-            const newId = res.data?.id || `LOCAL-${Date.now()}`;
             let imageUrl = "";
             if (row.imageFile) {
-              try {
-                imageUrl = await uploadToGithub(row.imageFile, newId, settings);
-                await gasGet("updateInventoryItem", {id:newId,imageUrl});
-              } catch { toast(`Image for ${row.name} failed`,"info"); }
+              // Use a temp id for the image path; GitHub path doesn't need to match final sheet ID.
+              const tempId = `TMP-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
+              try { imageUrl = await uploadToGithub(row.imageFile, tempId, settings); }
+              catch { toast(`Image for ${row.name} failed`,"info"); }
             }
-            setInventory(p => [...p, {id:newId,...payload,imageUrl,active:true}]);
-          }
-          toast(`${rows.length} item(s) added!`,"success");
+            const payload = {name:row.name.trim(),category:row.category,price30ml:+row.price30ml,priceBottle:+row.priceBottle,mlPerBottle,mlInStock,lowStockBottles:+row.lowStockBottles,imageUrl,forceNew:true};
+            const res = await gasGet("addInventoryItem", payload);
+            const newId = res.data?.id || `LOCAL-${Date.now()}`;
+            return { id:newId, ...payload, active:true };
+          }));
+          if (createResults.length) setInventory(p => [...p, ...createResults]);
+
+          // Merged items: combine stock with existing, replace other fields, one updateInventoryItem call each — also parallel.
+          const mergeResults = await Promise.all(toMerge.map(async ({ row, mergeTarget }) => {
+            const mlPerBottle = +row.mlPerBottle || 750;
+            const enteredStock = (row.mlInStock !== "" && row.mlInStock !== undefined && row.mlInStock !== null)
+              ? +row.mlInStock : 0;
+            const mlInStock = (mergeTarget.mlInStock || 0) + enteredStock;
+            let imageUrl = mergeTarget.imageUrl || "";
+            if (row.imageFile) {
+              try { imageUrl = await uploadToGithub(row.imageFile, mergeTarget.id, settings); } catch { toast(`Image for ${row.name} failed`,"info"); }
+            }
+            const payload = {id:mergeTarget.id,name:row.name.trim(),category:row.category,price30ml:+row.price30ml,priceBottle:+row.priceBottle,mlPerBottle,mlInStock,lowStockBottles:+row.lowStockBottles,imageUrl,mergeIntoExisting:true};
+            await gasGet("updateInventoryItem", payload);
+            return payload;
+          }));
+          if (mergeResults.length) setInventory(p => p.map(i => {
+            const m = mergeResults.find(r => r.id === i.id);
+            return m ? {...i, ...m} : i;
+          }));
+
+          const parts = [];
+          if (createResults.length) parts.push(`${createResults.length} added`);
+          if (mergeResults.length)  parts.push(`${mergeResults.length} merged into existing`);
+          if (skipped)              parts.push(`${skipped} skipped`);
+          toast(parts.length ? parts.join(", ") : "Nothing saved", "success");
         }
       } catch(e) { toast("Save failed","error"); }
       setSaving(false); setShowAdd(false); setEditItem(null); setRows([BLANK_ROW()]);
