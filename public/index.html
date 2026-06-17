@@ -562,6 +562,7 @@
         await gasGet("saveOrder", { tableNumber: activeTable, orders: newOrders });
         setOrders(p => [...p.filter(o => !(o.tableNumber===activeTable && o.status==="open")), ...newOrders]);
         toast("Table marked occupied!","success");
+        await refreshInventory();
       } catch(e) { toast("Save failed","error"); }
       setSaving(false);
       setScreen("tables");
@@ -581,6 +582,19 @@
         items:cart.map(c => ({name:c.name,qty:c.qty,unit:c.unit,rate:c.unitPrice,lineTotal:c.lineTotal,itemId:c.itemId,category:c.category})),
       };
       try {
+        // Ensure the latest cart state is reflected as "open" lines before billing,
+        // so saveOrder's stock diffing (occupied -> billed) doesn't double-deduct
+        // and "open" rows get correctly flipped to "billed".
+        await gasGet("saveOrder", { tableNumber: activeTable, orders: cart.map(c => ({
+          orderId:`ORD-${Date.now()}-${Math.random().toString(36).slice(2,5).toUpperCase()}`,
+          tableNumber:activeTable,
+          customerName: customerInfo.name || "",
+          customerPhone: customerInfo.phone || "",
+          itemId:c.itemId, itemName:c.name, qty:c.qty, unit:c.unit,
+          unitPrice:c.unitPrice, lineTotal:c.lineTotal, category:c.category, status:"open",
+          date:new Date().toLocaleDateString("en-IN"),
+          time:new Date().toLocaleTimeString("en-IN"),
+        })) });
         await gasGet("saveBill", bill);
         await gasGet("updateOrderStatus", {tableNumber:activeTable, newStatus:"billed"});
         setBills(p => [...p, bill]);
@@ -826,11 +840,17 @@
         updateRow(i, "price30ml", calcPer30ml(val, row.mlPerBottle));
       }
     };
-    // FIX: re-calc bottle price when ML/bottle changes
+    // FIX: re-calc bottle price when ML/bottle changes, AND keep available
+    // stock in sync with ML/bottle when the user hasn't set a custom stock
+    // value yet (i.e. available stock currently mirrors the old ML/bottle,
+    // meaning it was never manually edited away from the 1-bottle default).
     const handleMlPerBottleChange = (i, val) => {
-      updateRow(i, "mlPerBottle", val);
       const row = rows[i];
+      const prevMlPerBottle = +row.mlPerBottle || 750;
+      const stockMatchesDefault = (+row.mlInStock || 0) === prevMlPerBottle;
+      updateRow(i, "mlPerBottle", val);
       if (row.price30ml && val) updateRow(i, "priceBottle", calcBottlePrice(row.price30ml, val));
+      if (stockMatchesDefault) updateRow(i, "mlInStock", +val || 0);
     };
 
     const saveItems = async () => {
@@ -843,13 +863,23 @@
           if (row.imageFile) {
             try { imageUrl = await uploadToGithub(row.imageFile, editItem.id, settings); } catch { toast("Image upload failed","info"); }
           }
-          const payload = {id:editItem.id,name:row.name.trim(),category:row.category,price30ml:+row.price30ml,priceBottle:+row.priceBottle,mlPerBottle:+row.mlPerBottle,mlInStock:+row.mlInStock,lowStockBottles:+row.lowStockBottles,imageUrl};
+          // FIX: if Available Stock was left blank/0, default to ML/Bottle (1 bottle on hand)
+          const mlPerBottle = +row.mlPerBottle || 750;
+          const mlInStock = (row.mlInStock !== "" && row.mlInStock !== undefined && row.mlInStock !== null && +row.mlInStock !== 0)
+            ? +row.mlInStock
+            : mlPerBottle;
+          const payload = {id:editItem.id,name:row.name.trim(),category:row.category,price30ml:+row.price30ml,priceBottle:+row.priceBottle,mlPerBottle,mlInStock,lowStockBottles:+row.lowStockBottles,imageUrl};
           await gasGet("updateInventoryItem", payload);
           setInventory(p => p.map(i => i.id===editItem.id ? {...i,...payload} : i));
           toast("Item updated!","success");
         } else {
           for (const row of rows) {
-            const payload = {name:row.name.trim(),category:row.category,price30ml:+row.price30ml,priceBottle:+row.priceBottle,mlPerBottle:+row.mlPerBottle,mlInStock:+row.mlInStock,lowStockBottles:+row.lowStockBottles,imageUrl:""};
+            // FIX: if Available Stock was left blank/0, default to ML/Bottle (1 bottle on hand)
+            const mlPerBottle = +row.mlPerBottle || 750;
+            const mlInStock = (row.mlInStock !== "" && row.mlInStock !== undefined && row.mlInStock !== null && +row.mlInStock !== 0)
+              ? +row.mlInStock
+              : mlPerBottle;
+            const payload = {name:row.name.trim(),category:row.category,price30ml:+row.price30ml,priceBottle:+row.priceBottle,mlPerBottle,mlInStock,lowStockBottles:+row.lowStockBottles,imageUrl:""};
             const res = await gasGet("addInventoryItem", payload);
             const newId = res.data?.id || `LOCAL-${Date.now()}`;
             let imageUrl = "";
@@ -972,8 +1002,8 @@
                       </div>
 
                       <div>
-                        <Label>Opening Stock (ML)</Label>
-                        <input type="number" inputMode="numeric" value={row.mlInStock} onChange={e => updateRow(i,"mlInStock",e.target.value)} placeholder="e.g. 2250 = 3 btl" />
+                        <Label>Available Stock (ML) <span style={{color:"#888",fontSize:10,fontWeight:400}}>defaults to 1 bottle</span></Label>
+                        <input type="number" inputMode="numeric" value={row.mlInStock} onChange={e => updateRow(i,"mlInStock",e.target.value)} placeholder={`e.g. ${row.mlPerBottle || 750} = 1 btl`} />
                       </div>
                       <div>
                         <Label>Low Alert (Bottles)</Label>
@@ -1324,6 +1354,11 @@
     useEffect(() => {
       const load = async () => {
         try {
+          // One-time safety check: repair the "orders" sheet header row if it's
+          // stale/out of order from an earlier version of this sheet/script.
+          // This does NOT touch existing data rows — see ensureOrderHeaders()
+          // in the Apps Script backend for details.
+          gasGet("fixOrdersHeaders").catch(() => {});
           const [invRes, ordRes, billRes, settRes] = await Promise.all([
             gasGet("getInventory"), gasGet("getOrders"), gasGet("getBills"), gasGet("getSettings"),
           ]);
