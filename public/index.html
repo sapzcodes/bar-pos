@@ -68,7 +68,6 @@
   };
 
   const CATEGORIES = ["All","Liquor","Beer","Soft Drinks","Cocktails","Mocktails"];
-  // Categories that use per-30ml / shot-based pricing
   const LIQUOR_CATS = ["Liquor","Beer"];
 
   // ── GAS FETCH HELPER ──────────────────────────────────────────────
@@ -80,12 +79,10 @@
   }
 
   // ── PRICE HELPERS ─────────────────────────────────────────────────
-  // FIX: bottle price = (mlPerBottle / 30) * price30ml  — uses actual ML, not hardcoded 750
   function calcBottlePrice(price30ml, mlPerBottle) {
     const ml = +mlPerBottle || 750;
     return Math.round((ml / 30) * +price30ml);
   }
-  // Reverse: 30ml price from bottle price
   function calcPer30ml(priceBottle, mlPerBottle) {
     const ml = +mlPerBottle || 750;
     return Math.round((+priceBottle / (ml / 30)) * 100) / 100;
@@ -103,47 +100,66 @@
     return { subtotal, gstAmount, total: subtotal + gstAmount };
   }
 
-  // ML helpers
-  function mlToDisplay(ml) {
-    if (ml >= 750) return `${(ml/750).toFixed(2)} btl (${Math.round(ml)}ml)`;
-    return `${Math.round(ml)}ml`;
+  // ── STOCK HELPERS ─────────────────────────────────────────────────
+  function isLowStock(qtyAvailable, lowStockThreshold) {
+    return (+qtyAvailable || 0) <= (+lowStockThreshold || 2);
   }
-  function isLowStock(mlInStock, lowStockBottles) {
-    return mlInStock < (lowStockBottles * 750);
+
+  function bottlesToDisplay(qty) {
+    const n = +qty || 0;
+    if (n === 0) return "0 btl";
+    if (n < 1)   return `${(n * 750).toFixed(0)}ml`;
+    return `${n % 1 === 0 ? n : n.toFixed(2)} btl`;
   }
 
   // ── ROW MAPPERS ───────────────────────────────────────────────────
   function mapInvRow(r) {
     return {
-      id: r["Item ID"], name: r["Item Name"], category: r["Category"],
-      imageUrl: r["Image URL"] || "",
-      price30ml: +r["Price 30ml"] || 0,
-      priceBottle: +r["Price Bottle"] || 0,
-      mlPerBottle: +r["ML per Bottle"] || 750,
-      mlInStock: +r["ML in Stock"] || 0,
-      lowStockBottles: +r["Low Stock Bottles"] || 2,
-      active: r["Active"] !== false && r["Active"] !== "FALSE",
+      id:                 r["Item ID"],
+      name:               r["Item Name"],
+      category:           r["Category"],
+      imageUrl:           r["Image URL"] || "",
+      price30ml:          +r["Price 30ml"]          || 0,
+      priceBottle:        +r["Price Bottle"]         || 0,
+      mlPerBottle:        +r["ML per Bottle"]        || 750,
+      qtyAvailable:       +r["Qty Available"]        || 0,
+      lowStockThreshold:  +r["Low Stock Threshold"]  || 2,
+      active:             r["Active"] !== false && r["Active"] !== "FALSE",
     };
   }
+
   function mapOrderRow(r) {
     return {
-      orderId: r["Order ID"], tableNumber: r["Table Number"],
-      customerName: r["Customer Name"], customerPhone: r["Customer Phone"],
-      itemId: r["Item ID"], itemName: r["Item Name"],
-      qty: +r["Qty"], unit: r["Unit"],
-      unitPrice: +r["Unit Price"], lineTotal: +r["Line Total"],
-      status: r["Status"], date: r["Date"], time: r["Time"],
+      orderId:       r["Order ID"],
+      tableNumber:   r["Table Number"],
+      customerName:  r["Customer Name"],
+      customerPhone: r["Customer Phone"],
+      itemId:        r["Item ID"],
+      itemName:      r["Item Name"],
+      qty:           +r["Qty"],
+      unit:          r["Unit"],
+      unitPrice:     +r["Unit Price"],
+      lineTotal:     +r["Line Total"],
+      status:        r["Status"],
+      date:          r["Date"],
+      time:          r["Time"],
     };
   }
+
   function mapBillRow(r) {
     let items = [];
     try { items = typeof r["Items JSON"] === "string" ? JSON.parse(r["Items JSON"]) : (r["Items JSON"] || []); }
     catch(e) { items = []; }
     return {
-      billId: r["Bill ID"], tableNumber: r["Table Number"],
-      customerName: r["Customer Name"], customerPhone: r["Customer Phone"],
-      subtotal: +r["Subtotal"], gstAmount: +r["GST Amount"], total: +r["Total"],
-      dateTime: r["Date Time"], items,
+      billId:        r["Bill ID"],
+      tableNumber:   r["Table Number"],
+      customerName:  r["Customer Name"],
+      customerPhone: r["Customer Phone"],
+      subtotal:      +r["Subtotal"],
+      gstAmount:     +r["GST Amount"],
+      total:         +r["Total"],
+      dateTime:      r["Date Time"],
+      items,
     };
   }
 
@@ -159,9 +175,9 @@
   async function uploadToGithub(file, itemId, settings) {
     const { githubOwner, githubRepo, githubToken } = settings;
     if (!githubOwner || !githubRepo || !githubToken) return "";
-    const base64Full = await fileToBase64(file);
+    const base64Full    = await fileToBase64(file);
     const base64Content = base64Full.split(",")[1];
-    const ext = file.type.includes("png") ? "png" : "jpg";
+    const ext  = file.type.includes("png") ? "png" : "jpg";
     const path = `images/${itemId}.${ext}`;
     let sha = undefined;
     try {
@@ -170,7 +186,7 @@
     } catch(_) {}
     const payload = { message: `Upload image for ${itemId}`, content: base64Content };
     if (sha) payload.sha = sha;
-    const res = await fetch(`https://api.github.com/repos/${githubOwner}/${githubRepo}/contents/${path}`, {
+    const res  = await fetch(`https://api.github.com/repos/${githubOwner}/${githubRepo}/contents/${path}`, {
       method: "PUT",
       headers: { Authorization: `token ${githubToken}`, "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -285,21 +301,11 @@
     );
   }
 
-  // FIX: Category pills — sticky container above grid, no overflow hidden
   function CatTabs({ cats, active, onChange }) {
     return (
-      <div style={{
-        display:"flex", gap:6, overflowX:"auto", paddingBottom:6, paddingTop:2,
-        WebkitOverflowScrolling:"touch", scrollbarWidth:"none", msOverflowStyle:"none",
-        flexShrink:0,
-      }}>
+      <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:6,paddingTop:2,WebkitOverflowScrolling:"touch",scrollbarWidth:"none",msOverflowStyle:"none",flexShrink:0}}>
         {cats.map(c => (
-          <button key={c} onClick={() => onChange(c)} style={{
-            background: active===c ? "#C8873A" : "#F0F0F5",
-            color: active===c ? "#FFF" : "#666",
-            border:"none", borderRadius:20, padding:"8px 16px",
-            fontSize:12, fontWeight:700, whiteSpace:"nowrap", flexShrink:0,
-          }}>{c}</button>
+          <button key={c} onClick={() => onChange(c)} style={{background:active===c?"#C8873A":"#F0F0F5",color:active===c?"#FFF":"#666",border:"none",borderRadius:20,padding:"8px 16px",fontSize:12,fontWeight:700,whiteSpace:"nowrap",flexShrink:0}}>{c}</button>
         ))}
       </div>
     );
@@ -322,12 +328,7 @@
         <div style={{fontFamily:"'Bebas Neue',cursive",fontSize:22,color:"#C8873A",letterSpacing:2}}>{barName||"VELVET BARREL"}</div>
         <div style={{display:"flex",gap:8}}>
           {["server","dashboard"].map(m => (
-            <button key={m} onClick={() => setMode(m)} style={{
-              background: mode===m ? "#C8873A" : "#F0F0F5",
-              color: mode===m ? "#FFFFFF" : "#888",
-              border:"none", borderRadius:10, padding:"9px 18px",
-              fontSize:12, fontWeight:700, textTransform:"uppercase", letterSpacing:1,
-            }}>
+            <button key={m} onClick={() => setMode(m)} style={{background:mode===m?"#C8873A":"#F0F0F5",color:mode===m?"#FFFFFF":"#888",border:"none",borderRadius:10,padding:"9px 18px",fontSize:12,fontWeight:700,textTransform:"uppercase",letterSpacing:1}}>
               {m==="server" ? "🍸 Order" : "📊 Mgr"}
             </button>
           ))}
@@ -387,15 +388,14 @@
     const [qty, setQty] = useState(1);
     const [unit, setUnit] = useState(LIQUOR_CATS.includes(item.category) ? "small" : "bottle");
     const [imgError, setImgError] = useState(false);
-    const lowStock = isLowStock(item.mlInStock, item.lowStockBottles);
+
+    const lowStock = isLowStock(item.qtyAvailable, item.lowStockThreshold);
     const isLiquor = LIQUOR_CATS.includes(item.category);
 
-    // FIX: calculate bottle price using actual ML/bottle ratio
     const priceBottle = item.priceBottle || calcBottlePrice(item.price30ml, item.mlPerBottle);
-    const price30 = item.price30ml || calcPer30ml(priceBottle, item.mlPerBottle);
-    const price60 = Math.round(price30 * 2);
+    const price30     = item.price30ml   || calcPer30ml(priceBottle, item.mlPerBottle);
+    const price60     = Math.round(price30 * 2);
 
-    // FIX: display price — show per30ml if it exists, else per bottle
     let displayPrice;
     if (isLiquor) {
       displayPrice = unit === "small" ? price30 : unit === "large" ? price60 : priceBottle;
@@ -403,13 +403,12 @@
       displayPrice = priceBottle;
     }
 
-    // FIX: price label — show what the price represents
     const priceLabel = isLiquor
       ? (unit === "small" ? "/30ml" : unit === "large" ? "/60ml" : "/btl")
-      : (item.price30ml ? "/30ml" : "/btl");
+      : "/btl";
 
     const showEmoji = !item.imageUrl || imgError;
-    const catEmoji = {Liquor:"🥃",Beer:"🍺","Soft Drinks":"🥤",Cocktails:"🍹",Mocktails:"🧃"}[item.category] || "🍸";
+    const catEmoji  = {Liquor:"🥃",Beer:"🍺","Soft Drinks":"🥤",Cocktails:"🍹",Mocktails:"🧃"}[item.category] || "🍸";
 
     return (
       <Card style={{padding:12,border:lowStock?"1.5px solid #F5C0BB":"1px solid #EBEBF5",display:"flex",flexDirection:"column",gap:8}}>
@@ -421,14 +420,10 @@
           <div style={{fontSize:11,color:"#888",marginTop:2}}>{item.category}</div>
           {lowStock && <div style={{fontSize:10,color:"#E74C3C",fontWeight:700,marginTop:2}}>⚠ LOW STOCK</div>}
         </div>
-
-        {/* FIX: show price with context label */}
         <div style={{display:"flex",alignItems:"baseline",gap:3}}>
           <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:14,color:"#C8873A",fontWeight:700}}>₹{displayPrice}</span>
           <span style={{fontSize:10,color:"#aaa"}}>{priceLabel}</span>
         </div>
-
-        {/* FIX: unit selector only for liquor/beer */}
         {isLiquor && (
           <select value={unit} onChange={e => setUnit(e.target.value)} style={{fontSize:12,padding:"7px 8px"}}>
             <option value="small">Small 30ml — ₹{price30}</option>
@@ -436,7 +431,6 @@
             <option value="bottle">Bottle ({item.mlPerBottle}ml) — ₹{priceBottle}</option>
           </select>
         )}
-
         <div style={{display:"flex",gap:6,alignItems:"center"}}>
           <button onClick={() => setQty(q => Math.max(1,q-1))} style={{background:"#F0F0F5",border:"none",color:"#1A1A2E",width:36,height:36,borderRadius:8,fontSize:18,fontWeight:700}}>−</button>
           <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:15,flex:1,textAlign:"center",fontWeight:600}}>{qty}</span>
@@ -449,7 +443,7 @@
 
   // ── RECENT BILLS ──────────────────────────────────────────────────
   function RecentBillsView({ bills, settings, onClose }) {
-    const now = Date.now();
+    const now    = Date.now();
     const recent = bills.filter(b => {
       try { return now - new Date(b.dateTime).getTime() < 86400000; } catch { return false; }
     }).slice().reverse();
@@ -489,11 +483,11 @@
     const [search, setSearch] = useState("");
     const [catFilter, setCatFilter] = useState("All");
     const [orderTab, setOrderTab] = useState("menu");
-    const [showCustomerModal, setShowCustomerModal] = useState(false);
     const [showBillConfirm, setShowBillConfirm] = useState(false);
     const [showRecentBills, setShowRecentBills] = useState(false);
     const [saving, setSaving] = useState(false);
 
+    // ── CHANGE: openTable no longer shows a customer modal upfront ──
     const openTable = table => {
       const existing = orders.filter(o => o.tableNumber===table && o.status==="open");
       setActiveTable(table);
@@ -507,25 +501,22 @@
           else cartMap[key] = {key,itemId:o.itemId,name:o.itemName,qty:o.qty,unit:o.unit,unitPrice:o.unitPrice,lineTotal:o.lineTotal,category:o.category};
         });
         setCart(Object.values(cartMap));
-        setScreen("order");
       } else {
         setCustomerInfo({name:"", phone:""});
         setCart([]);
-        setShowCustomerModal(true);
-        setScreen("order");
       }
+      setScreen("order");
     };
 
     const addToCart = (item, qty, unit) => {
-      const isLiquor = LIQUOR_CATS.includes(item.category);
+      const isLiquor    = LIQUOR_CATS.includes(item.category);
       const priceBottle = item.priceBottle || calcBottlePrice(item.price30ml, item.mlPerBottle);
-      const price30 = item.price30ml || calcPer30ml(priceBottle, item.mlPerBottle);
+      const price30     = item.price30ml   || calcPer30ml(priceBottle, item.mlPerBottle);
       let price;
       if (isLiquor) {
         price = unit === "bottle" ? priceBottle : price30 * (unit === "small" ? 1 : 2);
       } else {
         price = priceBottle;
-        // non-liquor: unit is always "bottle"
       }
       const key = `${item.id}-${unit}`;
       setCart(prev => {
@@ -537,27 +528,28 @@
     };
 
     const removeFromCart = key => setCart(p => p.filter(c => c.key!==key));
-    const updateCartQty = (key, delta) => setCart(p =>
+    const updateCartQty  = (key, delta) => setCart(p =>
       p.map(c => c.key===key ? {...c, qty:Math.max(1,c.qty+delta), lineTotal:Math.max(1,c.qty+delta)*c.unitPrice} : c)
     );
 
     const rawSubtotal = cart.reduce((a,c) => a+c.lineTotal, 0);
     const { subtotal, gstAmount, total } = calcTotals(rawSubtotal, settings);
 
-    // FIX: saveOccupied now includes customerName and customerPhone in each order row
+    const buildOrderRows = (info) => cart.map(c => ({
+      orderId:`ORD-${Date.now()}-${Math.random().toString(36).slice(2,5).toUpperCase()}`,
+      tableNumber:activeTable,
+      customerName:  info ? (info.name  || "") : (customerInfo.name  || ""),
+      customerPhone: info ? (info.phone || "") : (customerInfo.phone || ""),
+      itemId:c.itemId, itemName:c.name, qty:c.qty, unit:c.unit,
+      unitPrice:c.unitPrice, lineTotal:c.lineTotal, category:c.category, status:"open",
+      date:new Date().toLocaleDateString("en-IN"),
+      time:new Date().toLocaleTimeString("en-IN"),
+    }));
+
     const saveOccupied = async () => {
       if (!cart.length) return;
       setSaving(true);
-      const newOrders = cart.map(c => ({
-        orderId:`ORD-${Date.now()}-${Math.random().toString(36).slice(2,5).toUpperCase()}`,
-        tableNumber:activeTable,
-        customerName: customerInfo.name || "",
-        customerPhone: customerInfo.phone || "",
-        itemId:c.itemId, itemName:c.name, qty:c.qty, unit:c.unit,
-        unitPrice:c.unitPrice, lineTotal:c.lineTotal, category:c.category, status:"open",
-        date:new Date().toLocaleDateString("en-IN"),
-        time:new Date().toLocaleTimeString("en-IN"),
-      }));
+      const newOrders = buildOrderRows();
       try {
         await gasGet("saveOrder", { tableNumber: activeTable, orders: newOrders });
         setOrders(p => [...p.filter(o => !(o.tableNumber===activeTable && o.status==="open")), ...newOrders]);
@@ -568,33 +560,22 @@
       setScreen("tables");
     };
 
-    // FIX: generateBill also passes customerName and customerPhone correctly
-    const generateBill = async () => {
+    const generateBill = async (billCustomerInfo) => {
       if (!cart.length) return;
       setSaving(true);
       const billId = `BILL-${Date.now()}`;
       const bill = {
         billId, tableNumber:activeTable,
-        customerName: customerInfo.name || "",
-        customerPhone: customerInfo.phone || "",
+        customerName:  billCustomerInfo.name  || "",
+        customerPhone: billCustomerInfo.phone || "",
         subtotal, gstAmount, total,
         dateTime:new Date().toLocaleString("en-IN"),
         items:cart.map(c => ({name:c.name,qty:c.qty,unit:c.unit,rate:c.unitPrice,lineTotal:c.lineTotal,itemId:c.itemId,category:c.category})),
       };
       try {
-        // Ensure the latest cart state is reflected as "open" lines before billing,
-        // so saveOrder's stock diffing (occupied -> billed) doesn't double-deduct
-        // and "open" rows get correctly flipped to "billed".
-        await gasGet("saveOrder", { tableNumber: activeTable, orders: cart.map(c => ({
-          orderId:`ORD-${Date.now()}-${Math.random().toString(36).slice(2,5).toUpperCase()}`,
-          tableNumber:activeTable,
-          customerName: customerInfo.name || "",
-          customerPhone: customerInfo.phone || "",
-          itemId:c.itemId, itemName:c.name, qty:c.qty, unit:c.unit,
-          unitPrice:c.unitPrice, lineTotal:c.lineTotal, category:c.category, status:"open",
-          date:new Date().toLocaleDateString("en-IN"),
-          time:new Date().toLocaleTimeString("en-IN"),
-        })) });
+        // Save order rows with the customer info captured at billing time
+        const orderRowsWithCustomer = buildOrderRows(billCustomerInfo);
+        await gasGet("saveOrder", { tableNumber: activeTable, orders: orderRowsWithCustomer });
         await gasGet("saveBill", bill);
         await gasGet("updateOrderStatus", {tableNumber:activeTable, newStatus:"billed"});
         setBills(p => [...p, bill]);
@@ -638,17 +619,6 @@
             );
           })}
         </div>
-
-        {showCustomerModal && (
-          <Modal title={`Table ${activeTable} — Customer`} onClose={() => { setShowCustomerModal(false); setScreen("tables"); setActiveTable(null); }}>
-            <Label>Customer Name (optional)</Label>
-            <input value={customerInfo.name} onChange={e => setCustomerInfo(p=>({...p,name:e.target.value}))} placeholder="e.g. Arjun Kumar" style={{marginBottom:12}} />
-            <Label>Phone Number (optional)</Label>
-            <input value={customerInfo.phone} onChange={e => setCustomerInfo(p=>({...p,phone:e.target.value}))} placeholder="9876543210" inputMode="tel" style={{marginBottom:20}} />
-            <Btn onClick={() => setShowCustomerModal(false)} style={{width:"100%",padding:"15px 0",fontSize:15}}>Start Order →</Btn>
-          </Modal>
-        )}
-
         {showRecentBills && <RecentBillsView bills={bills} settings={settings} onClose={() => setShowRecentBills(false)} />}
       </div>
     );
@@ -656,10 +626,8 @@
     // ── ORDER SCREEN ──
     return (
       <div style={{display:"flex",flexDirection:"column",height:"calc(100vh - 58px)",overflow:"hidden"}}>
-
-        {/* Top bar */}
         <div style={{background:"#FFFFFF",padding:"8px 12px",borderBottom:"1px solid #EBEBF5",display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
-          <button onClick={() => { setScreen("tables"); setShowCustomerModal(false); }} style={{background:"#F0F0F5",border:"none",color:"#1A1A2E",borderRadius:10,padding:"10px 14px",fontSize:13,fontWeight:700,minHeight:44,whiteSpace:"nowrap"}}>← Back</button>
+          <button onClick={() => setScreen("tables")} style={{background:"#F0F0F5",border:"none",color:"#1A1A2E",borderRadius:10,padding:"10px 14px",fontSize:13,fontWeight:700,minHeight:44,whiteSpace:"nowrap"}}>← Back</button>
           <div style={{fontFamily:"'Bebas Neue',cursive",fontSize:20,color:"#C8873A",letterSpacing:2,flex:1}}>TABLE {activeTable}</div>
           <div style={{display:"flex",gap:6}}>
             <button onClick={() => setOrderTab("menu")} style={{background:orderTab==="menu"?"#C8873A":"#F0F0F5",color:orderTab==="menu"?"#FFF":"#1A1A2E",border:"none",borderRadius:10,padding:"10px 14px",fontSize:12,fontWeight:700,minHeight:44}}>Menu</button>
@@ -670,15 +638,12 @@
           </div>
         </div>
 
-        {/* MENU TAB — FIX: search + category pills are sticky above scrollable grid */}
         {orderTab==="menu" && (
           <div style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column"}}>
-            {/* Sticky search + filter area */}
             <div style={{position:"sticky",top:0,zIndex:10,background:"#F7F8FA",padding:"10px 10px 6px",display:"flex",flexDirection:"column",gap:6,borderBottom:"1px solid #EBEBF5"}}>
               <input placeholder="🔍 Search items..." value={search} onChange={e => setSearch(e.target.value)} style={{background:"#FFFFFF"}} />
               <CatTabs cats={inventoryCats} active={catFilter} onChange={setCatFilter} />
             </div>
-            {/* Scrollable grid */}
             <div style={{padding:"10px 10px 80px"}}>
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(155px,1fr))",gap:10}}>
                 {filtered.map(item => <MenuItemCard key={item.id} item={item} onAdd={addToCart} settings={settings} />)}
@@ -688,7 +653,6 @@
           </div>
         )}
 
-        {/* CART TAB */}
         {orderTab==="cart" && (
           <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
             <div style={{flex:1,overflowY:"auto",padding:"8px 12px"}}>
@@ -719,7 +683,6 @@
                 ))
               }
             </div>
-
             {cart.length > 0 && (
               <div style={{padding:"12px 14px",borderTop:"1px solid #EBEBF5",background:"#FFFFFF",flexShrink:0}}>
                 <div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:"#888",marginBottom:3}}>
@@ -741,27 +704,77 @@
           </div>
         )}
 
-        {showBillConfirm && (
-          <Modal title="Generate Bill?" onClose={() => setShowBillConfirm(false)}>
-            <p style={{color:"#888",fontSize:13,marginBottom:6}}>Table {activeTable} · {customerInfo.name||"Guest"}</p>
-            <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:32,fontWeight:700,color:"#C8873A",marginBottom:20}}>₹{total.toFixed(0)}</div>
-            <div style={{display:"flex",gap:8}}>
-              <Btn variant="secondary" onClick={() => setShowBillConfirm(false)} style={{flex:1,padding:"15px 0",fontSize:14}}>Cancel</Btn>
-              <Btn onClick={generateBill} disabled={saving} style={{flex:2,padding:"15px 0",fontSize:14}}>{saving?"Saving...":"🖨️ Print Bill"}</Btn>
-            </div>
-          </Modal>
-        )}
+        {/* ── BILL CONFIRM MODAL — now includes customer name + phone ── */}
+        {showBillConfirm && <BillConfirmModal
+          activeTable={activeTable}
+          total={total}
+          saving={saving}
+          initialCustomer={customerInfo}
+          onClose={() => setShowBillConfirm(false)}
+          onConfirm={generateBill}
+        />}
       </div>
+    );
+  }
+
+  // ── BILL CONFIRM MODAL (extracted so it has its own local state) ──
+  function BillConfirmModal({ activeTable, total, saving, initialCustomer, onClose, onConfirm }) {
+    const [name, setName]   = useState(initialCustomer.name  || "");
+    const [phone, setPhone] = useState(initialCustomer.phone || "");
+
+    return (
+      <Modal title="Generate Bill?" onClose={onClose}>
+        {/* Customer info — optional */}
+        <div style={{background:"#F7F8FA",borderRadius:12,padding:"14px 14px 10px",marginBottom:16}}>
+          <div style={{fontSize:11,color:"#888",fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",marginBottom:10}}>
+            Customer Info <span style={{fontSize:10,fontWeight:400,color:"#bbb"}}>(optional)</span>
+          </div>
+          <div style={{marginBottom:10}}>
+            <Label>Name</Label>
+            <input
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder="e.g. Arjun Kumar"
+              style={{background:"#FFFFFF"}}
+            />
+          </div>
+          <div>
+            <Label>Mobile</Label>
+            <input
+              value={phone}
+              onChange={e => setPhone(e.target.value)}
+              placeholder="9876543210"
+              inputMode="tel"
+              style={{background:"#FFFFFF"}}
+            />
+          </div>
+        </div>
+
+        {/* Summary */}
+        <p style={{color:"#888",fontSize:13,marginBottom:6}}>
+          Table {activeTable} · {name || "Guest"}
+        </p>
+        <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:32,fontWeight:700,color:"#C8873A",marginBottom:20}}>
+          ₹{total.toFixed(0)}
+        </div>
+
+        <div style={{display:"flex",gap:8}}>
+          <Btn variant="secondary" onClick={onClose} style={{flex:1,padding:"15px 0",fontSize:14}}>Cancel</Btn>
+          <Btn onClick={() => onConfirm({name, phone})} disabled={saving} style={{flex:2,padding:"15px 0",fontSize:14}}>
+            {saving ? "Saving..." : "🖨️ Print Bill"}
+          </Btn>
+        </div>
+      </Modal>
     );
   }
 
   // ── OVERVIEW TAB ──────────────────────────────────────────────────
   function OverviewTab({ orders, bills, inventory }) {
-    const todayStr = new Date().toLocaleDateString("en-IN");
-    const todayBills = bills.filter(b => b.dateTime?.includes(todayStr));
+    const todayStr     = new Date().toLocaleDateString("en-IN");
+    const todayBills   = bills.filter(b => b.dateTime?.includes(todayStr));
     const todayRevenue = todayBills.reduce((a,b) => a+(+b.total||0), 0);
-    const uniqueOpen = [...new Set(orders.filter(o=>o.status==="open").map(o=>o.tableNumber))].length;
-    const lowStock = inventory.filter(i => i.active && isLowStock(i.mlInStock, i.lowStockBottles)).length;
+    const uniqueOpen   = [...new Set(orders.filter(o=>o.status==="open").map(o=>o.tableNumber))].length;
+    const lowStock     = inventory.filter(i => i.active && isLowStock(i.qtyAvailable, i.lowStockThreshold)).length;
     const stats = [
       {label:"Today's Revenue", value:`₹${todayRevenue.toLocaleString("en-IN",{maximumFractionDigits:0})}`, color:"#C8873A"},
       {label:"Bills Today",     value:todayBills.length, color:"#27AE60"},
@@ -797,7 +810,13 @@
   }
 
   // ── INVENTORY TAB ─────────────────────────────────────────────────
-  const BLANK_ROW = () => ({name:"",category:"Liquor",price30ml:"",priceBottle:"",mlPerBottle:750,mlInStock:0,lowStockBottles:2,imageFile:null,imgPreview:null});
+  const BLANK_ROW = () => ({
+    name:"", category:"Liquor",
+    price30ml:"", priceBottle:"", mlPerBottle:750,
+    qtyAvailable:1,
+    lowStockThreshold:2,
+    imageFile:null, imgPreview:null
+  });
 
   function InventoryTab({ inventory, setInventory, settings, toast }) {
     const [showAdd, setShowAdd]   = useState(false);
@@ -809,7 +828,13 @@
     const openAdd = () => { setEditItem(null); setRows([BLANK_ROW()]); setShowAdd(true); };
     const openEdit = item => {
       setEditItem(item);
-      setRows([{name:item.name,category:item.category,price30ml:item.price30ml,priceBottle:item.priceBottle,mlPerBottle:item.mlPerBottle,mlInStock:item.mlInStock,lowStockBottles:item.lowStockBottles,imageFile:null,imgPreview:item.imageUrl||null}]);
+      setRows([{
+        name:item.name, category:item.category,
+        price30ml:item.price30ml, priceBottle:item.priceBottle, mlPerBottle:item.mlPerBottle,
+        qtyAvailable:item.qtyAvailable,
+        lowStockThreshold:item.lowStockThreshold,
+        imageFile:null, imgPreview:item.imageUrl||null
+      }]);
       setShowAdd(true);
     };
 
@@ -826,13 +851,11 @@
       updateRow(i, "imageFile", file);
     };
 
-    // FIX: auto-calc bottle price using actual ML/bottle
     const handlePrice30Change = (i, val) => {
       updateRow(i, "price30ml", val);
       const row = rows[i];
       if (val && row.mlPerBottle) updateRow(i, "priceBottle", calcBottlePrice(val, row.mlPerBottle));
     };
-    // FIX: auto-calc per30ml from bottle price
     const handlePriceBottleChange = (i, val) => {
       updateRow(i, "priceBottle", val);
       const row = rows[i];
@@ -840,17 +863,10 @@
         updateRow(i, "price30ml", calcPer30ml(val, row.mlPerBottle));
       }
     };
-    // FIX: re-calc bottle price when ML/bottle changes, AND keep available
-    // stock in sync with ML/bottle when the user hasn't set a custom stock
-    // value yet (i.e. available stock currently mirrors the old ML/bottle,
-    // meaning it was never manually edited away from the 1-bottle default).
     const handleMlPerBottleChange = (i, val) => {
       const row = rows[i];
-      const prevMlPerBottle = +row.mlPerBottle || 750;
-      const stockMatchesDefault = (+row.mlInStock || 0) === prevMlPerBottle;
       updateRow(i, "mlPerBottle", val);
       if (row.price30ml && val) updateRow(i, "priceBottle", calcBottlePrice(row.price30ml, val));
-      if (stockMatchesDefault) updateRow(i, "mlInStock", +val || 0);
     };
 
     const saveItems = async () => {
@@ -859,92 +875,86 @@
       try {
         if (editItem) {
           const row = rows[0];
-          // Upload image first so addInventoryItem/updateInventoryItem only needs ONE call
           let imageUrl = editItem.imageUrl || "";
           if (row.imageFile) {
             try { imageUrl = await uploadToGithub(row.imageFile, editItem.id, settings); } catch { toast("Image upload failed","info"); }
           }
-          const mlPerBottle = +row.mlPerBottle || 750;
-          const mlInStock = (row.mlInStock !== "" && row.mlInStock !== undefined && row.mlInStock !== null && +row.mlInStock !== 0)
-            ? +row.mlInStock
-            : mlPerBottle;
-          const payload = {id:editItem.id,name:row.name.trim(),category:row.category,price30ml:+row.price30ml,priceBottle:+row.priceBottle,mlPerBottle,mlInStock,lowStockBottles:+row.lowStockBottles,imageUrl};
+          const payload = {
+            id:editItem.id, name:row.name.trim(), category:row.category,
+            price30ml:+row.price30ml, priceBottle:+row.priceBottle, mlPerBottle:+row.mlPerBottle||750,
+            qtyAvailable:+row.qtyAvailable,
+            lowStockThreshold:+row.lowStockThreshold,
+            imageUrl
+          };
           await gasGet("updateInventoryItem", payload);
           setInventory(p => p.map(i => i.id===editItem.id ? {...i,...payload} : i));
           toast("Item updated!","success");
         } else {
-          // Check each row against current inventory for an exact (trimmed, case-insensitive)
-          // name match BEFORE making any network calls, so we can ask the user up front
-          // instead of mid-save. This is what stops two items (e.g. "Jim Beam" / "JD")
-          // from ever being able to collide onto the same ID.
-          const normalize = s => String(s||"").trim().toLowerCase();
+          const normalize    = s => String(s||"").trim().toLowerCase();
           const existingByName = {};
           inventory.forEach(i => { if (i.active) existingByName[normalize(i.name)] = i; });
 
-          const decisions = []; // one per row: {row, mode: "new" | "merge", mergeTarget}
+          const decisions = [];
           for (const row of rows) {
             const match = existingByName[normalize(row.name)];
             if (match) {
-              const mergeStock = confirm(
-                `"${row.name.trim()}" already exists (ID ${match.id}).\n\n` +
-                `OK = Update existing item (combine stock, replace other fields with what you entered)\n` +
-                `Cancel = Skip this row (don't create a duplicate)`
-              );
-              if (mergeStock) decisions.push({ row, mode: "merge", mergeTarget: match });
-              else decisions.push({ row, mode: "skip" });
+              const mergeStock = confirm(`"${row.name.trim()}" already exists.\n\nOK = Update + combine stock\nCancel = Skip`);
+              if (mergeStock) decisions.push({ row, mode:"merge", mergeTarget:match });
+              else            decisions.push({ row, mode:"skip" });
             } else {
-              decisions.push({ row, mode: "new" });
+              decisions.push({ row, mode:"new" });
             }
           }
 
-          const toCreate = decisions.filter(d => d.mode === "new");
-          const toMerge  = decisions.filter(d => d.mode === "merge");
-          const skipped  = decisions.filter(d => d.mode === "skip").length;
+          const toCreate = decisions.filter(d => d.mode==="new");
+          const toMerge  = decisions.filter(d => d.mode==="merge");
+          const skipped  = decisions.filter(d => d.mode==="skip").length;
 
-          // New items: upload image first, then ONE addInventoryItem call each — run in parallel.
           const createResults = await Promise.all(toCreate.map(async ({ row }) => {
-            const mlPerBottle = +row.mlPerBottle || 750;
-            const mlInStock = (row.mlInStock !== "" && row.mlInStock !== undefined && row.mlInStock !== null && +row.mlInStock !== 0)
-              ? +row.mlInStock
-              : mlPerBottle;
             let imageUrl = "";
             if (row.imageFile) {
-              // Use a temp id for the image path; GitHub path doesn't need to match final sheet ID.
               const tempId = `TMP-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
-              try { imageUrl = await uploadToGithub(row.imageFile, tempId, settings); }
-              catch { toast(`Image for ${row.name} failed`,"info"); }
+              try { imageUrl = await uploadToGithub(row.imageFile, tempId, settings); } catch { toast(`Image for ${row.name} failed`,"info"); }
             }
-            const payload = {name:row.name.trim(),category:row.category,price30ml:+row.price30ml,priceBottle:+row.priceBottle,mlPerBottle,mlInStock,lowStockBottles:+row.lowStockBottles,imageUrl,forceNew:true};
-            const res = await gasGet("addInventoryItem", payload);
+            const payload = {
+              name:row.name.trim(), category:row.category,
+              price30ml:+row.price30ml, priceBottle:+row.priceBottle, mlPerBottle:+row.mlPerBottle||750,
+              qtyAvailable:+row.qtyAvailable||1,
+              lowStockThreshold:+row.lowStockThreshold||2,
+              imageUrl, forceNew:true
+            };
+            const res   = await gasGet("addInventoryItem", payload);
             const newId = res.data?.id || `LOCAL-${Date.now()}`;
             return { id:newId, ...payload, active:true };
           }));
           if (createResults.length) setInventory(p => [...p, ...createResults]);
 
-          // Merged items: combine stock with existing, replace other fields, one updateInventoryItem call each — also parallel.
           const mergeResults = await Promise.all(toMerge.map(async ({ row, mergeTarget }) => {
-            const mlPerBottle = +row.mlPerBottle || 750;
-            const enteredStock = (row.mlInStock !== "" && row.mlInStock !== undefined && row.mlInStock !== null)
-              ? +row.mlInStock : 0;
-            const mlInStock = (mergeTarget.mlInStock || 0) + enteredStock;
+            const combinedQty = (+mergeTarget.qtyAvailable||0) + (+row.qtyAvailable||0);
             let imageUrl = mergeTarget.imageUrl || "";
             if (row.imageFile) {
               try { imageUrl = await uploadToGithub(row.imageFile, mergeTarget.id, settings); } catch { toast(`Image for ${row.name} failed`,"info"); }
             }
-            const payload = {id:mergeTarget.id,name:row.name.trim(),category:row.category,price30ml:+row.price30ml,priceBottle:+row.priceBottle,mlPerBottle,mlInStock,lowStockBottles:+row.lowStockBottles,imageUrl,mergeIntoExisting:true};
+            const payload = {
+              id:mergeTarget.id, name:row.name.trim(), category:row.category,
+              price30ml:+row.price30ml, priceBottle:+row.priceBottle, mlPerBottle:+row.mlPerBottle||750,
+              qtyAvailable:combinedQty,
+              lowStockThreshold:+row.lowStockThreshold||2,
+              imageUrl, mergeIntoExisting:true
+            };
             await gasGet("updateInventoryItem", payload);
             return payload;
           }));
           if (mergeResults.length) setInventory(p => p.map(i => {
-            const m = mergeResults.find(r => r.id === i.id);
-            return m ? {...i, ...m} : i;
+            const m = mergeResults.find(r => r.id===i.id);
+            return m ? {...i,...m} : i;
           }));
 
           const parts = [];
           if (createResults.length) parts.push(`${createResults.length} added`);
-          if (mergeResults.length)  parts.push(`${mergeResults.length} merged into existing`);
+          if (mergeResults.length)  parts.push(`${mergeResults.length} merged`);
           if (skipped)              parts.push(`${skipped} skipped`);
-          toast(parts.length ? parts.join(", ") : "Nothing saved", "success");
+          toast(parts.length ? parts.join(", ") : "Nothing saved","success");
         }
       } catch(e) { toast("Save failed","error"); }
       setSaving(false); setShowAdd(false); setEditItem(null); setRows([BLANK_ROW()]);
@@ -959,7 +969,7 @@
       } catch { toast("Delete failed","error"); }
     };
 
-    const cats = ["All",...CATEGORIES.slice(1)];
+    const cats      = ["All",...CATEGORIES.slice(1)];
     const displayed = inventory.filter(i => i.active && (catFilter==="All" || i.category===catFilter));
 
     return (
@@ -970,22 +980,24 @@
         </div>
         <CatTabs cats={cats} active={catFilter} onChange={setCatFilter} />
         <div style={{height:10}} />
+
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:10}}>
           {displayed.map(item => {
-            const low = isLowStock(item.mlInStock, item.lowStockBottles);
+            const low      = isLowStock(item.qtyAvailable, item.lowStockThreshold);
             const isLiquor = LIQUOR_CATS.includes(item.category);
             const catEmoji = {Liquor:"🥃",Beer:"🍺","Soft Drinks":"🥤",Cocktails:"🍹",Mocktails:"🧃"}[item.category] || "🍸";
             return (
               <Card key={item.id} style={{padding:12,border:low?"1.5px solid #F5C0BB":"1px solid #EBEBF5",position:"relative"}}>
                 {low && <div style={{position:"absolute",top:8,right:8,background:"#FFF0F0",color:"#E74C3C",fontSize:9,padding:"2px 7px",borderRadius:20,fontWeight:700}}>LOW</div>}
                 <div style={{background:"#F7F8FA",borderRadius:8,height:70,display:"flex",alignItems:"center",justifyContent:"center",fontSize:30,marginBottom:8,overflow:"hidden"}}>
-                  {item.imageUrl ? <img src={item.imageUrl} alt={item.name} style={{width:"100%",height:"100%",objectFit:"cover",borderRadius:8}} onError={e=>e.target.style.display="none"} /> : catEmoji}
+                  {item.imageUrl
+                    ? <img src={item.imageUrl} alt={item.name} style={{width:"100%",height:"100%",objectFit:"cover",borderRadius:8}} onError={e=>e.target.style.display="none"} />
+                    : catEmoji}
                 </div>
                 <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:9,color:"#aaa",marginBottom:2}}>{item.id}</div>
                 <div style={{fontSize:13,fontWeight:700,marginBottom:2}}>{item.name}</div>
                 <div style={{fontSize:11,color:"#888",marginBottom:6}}>{item.category}</div>
                 <div style={{display:"flex",gap:6,marginBottom:8}}>
-                  {/* FIX: show 30ml price only for liquor, else show bottle price */}
                   {isLiquor ? (
                     <div style={{flex:1,background:"#F7F8FA",borderRadius:6,padding:"5px 8px",fontSize:10}}>
                       <div style={{color:"#888"}}>30ml</div>
@@ -999,7 +1011,9 @@
                   )}
                   <div style={{flex:1,background:low?"#FFF0F0":"#F7F8FA",borderRadius:6,padding:"5px 8px",fontSize:10}}>
                     <div style={{color:"#888"}}>Stock</div>
-                    <div style={{color:low?"#E74C3C":"#27AE60",fontFamily:"'JetBrains Mono',monospace",fontWeight:600,fontSize:9}}>{mlToDisplay(item.mlInStock)}</div>
+                    <div style={{color:low?"#E74C3C":"#27AE60",fontFamily:"'JetBrains Mono',monospace",fontWeight:600,fontSize:10}}>
+                      {bottlesToDisplay(item.qtyAvailable)}
+                    </div>
                   </div>
                 </div>
                 <div style={{display:"flex",gap:6}}>
@@ -1036,15 +1050,12 @@
                         <Label>ML / Bottle</Label>
                         <input type="number" inputMode="numeric" value={row.mlPerBottle} onChange={e => handleMlPerBottleChange(i,e.target.value)} />
                       </div>
-
-                      {/* FIX: show 30ml price field only for liquor/beer */}
                       {isLiquorRow && (
                         <div>
                           <Label>Price / 30ml (₹)</Label>
                           <input type="number" inputMode="numeric" value={row.price30ml} onChange={e => handlePrice30Change(i,e.target.value)} />
                         </div>
                       )}
-
                       <div style={isLiquorRow ? {} : {gridColumn:"1/-1"}}>
                         <Label>
                           {isLiquorRow
@@ -1053,14 +1064,13 @@
                         </Label>
                         <input type="number" inputMode="numeric" value={row.priceBottle} onChange={e => handlePriceBottleChange(i,e.target.value)} />
                       </div>
-
                       <div>
-                        <Label>Available Stock (ML) <span style={{color:"#888",fontSize:10,fontWeight:400}}>defaults to 1 bottle</span></Label>
-                        <input type="number" inputMode="numeric" value={row.mlInStock} onChange={e => updateRow(i,"mlInStock",e.target.value)} placeholder={`e.g. ${row.mlPerBottle || 750} = 1 btl`} />
+                        <Label>Number of Bottles</Label>
+                        <input type="number" inputMode="numeric" value={row.qtyAvailable} min="0" step="1" onChange={e => updateRow(i,"qtyAvailable",e.target.value)} placeholder="e.g. 5" />
                       </div>
                       <div>
                         <Label>Low Alert (Bottles)</Label>
-                        <input type="number" inputMode="numeric" value={row.lowStockBottles} onChange={e => updateRow(i,"lowStockBottles",e.target.value)} />
+                        <input type="number" inputMode="numeric" value={row.lowStockThreshold} min="1" step="1" onChange={e => updateRow(i,"lowStockThreshold",e.target.value)} placeholder="e.g. 2" />
                       </div>
                       <div style={{gridColumn:"1/-1"}}>
                         <Label>Item Image {!settings.githubOwner && <span style={{color:"#E74C3C",fontSize:10}}>(configure GitHub in Settings)</span>}</Label>
@@ -1076,13 +1086,11 @@
                 );
               })}
             </div>
-
             {!editItem && (
               <button onClick={addRow} style={{width:"100%",marginTop:10,padding:"10px 0",background:"#F0F0F5",border:"1px dashed #CCC",borderRadius:10,fontSize:13,fontWeight:600,color:"#666"}}>
                 + Add Another Item
               </button>
             )}
-
             <Btn onClick={saveItems} disabled={saving} style={{width:"100%",padding:"15px 0",fontSize:14,marginTop:14}}>
               {saving ? "Saving..." : editItem ? "Save Changes" : `Save ${rows.length} Item${rows.length>1?"s":""}`}
             </Btn>
@@ -1099,8 +1107,8 @@
         <SectionTitle>Table Status</SectionTitle>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:10}}>
           {tables.map(t => {
-            const status = getTableStatus(t);
-            const clr = {free:"#27AE60",occupied:"#C8873A",billed:"#E74C3C"}[status];
+            const status  = getTableStatus(t);
+            const clr     = {free:"#27AE60",occupied:"#C8873A",billed:"#E74C3C"}[status];
             const tOrders = orders.filter(o=>o.tableNumber===t && o.status==="open");
             const running = tOrders.reduce((a,o)=>a+(+o.lineTotal||0),0);
             return (
@@ -1145,7 +1153,7 @@
     filtered.forEach(b => {
       (b.items||[]).forEach(item => {
         if (!itemTotals[item.name]) itemTotals[item.name]={qty:0,revenue:0};
-        itemTotals[item.name].qty += +item.qty||0;
+        itemTotals[item.name].qty     += +item.qty||0;
         itemTotals[item.name].revenue += +item.lineTotal||0;
       });
     });
@@ -1153,7 +1161,7 @@
 
     const exportCSV = () => {
       const header = "Bill ID,Table,Customer,Subtotal,GST,Total,Date\n";
-      const rows = filtered.map(b=>`${b.billId},${b.tableNumber},${b.customerName},${(+b.subtotal).toFixed(2)},${(+b.gstAmount).toFixed(2)},${(+b.total).toFixed(2)},${b.dateTime}`).join("\n");
+      const rows   = filtered.map(b=>`${b.billId},${b.tableNumber},${b.customerName},${(+b.subtotal).toFixed(2)},${(+b.gstAmount).toFixed(2)},${(+b.total).toFixed(2)},${b.dateTime}`).join("\n");
       const a = document.createElement("a");
       a.href = URL.createObjectURL(new Blob([header+rows],{type:"text/csv"}));
       a.download = "bills-export.csv"; a.click();
@@ -1283,7 +1291,7 @@
 
   // ── SETTINGS TAB ──────────────────────────────────────────────────
   function SettingsTab({ settings, setSettings, toast }) {
-    const [form, setForm] = useState({...settings});
+    const [form, setForm]   = useState({...settings});
     const [saving, setSaving] = useState(false);
 
     const save = async () => {
@@ -1357,11 +1365,7 @@
       <div style={{display:"flex",height:"calc(100vh - 58px)"}}>
         <div style={{width:56,background:"#FFFFFF",borderRight:"1px solid #EBEBF5",display:"flex",flexDirection:"column",gap:2,paddingTop:8,flexShrink:0}}>
           {tabs.map(t => (
-            <button key={t.id} onClick={()=>setTab(t.id)} title={t.label} style={{
-              background: tab===t.id ? "#FFF3E6" : "transparent",
-              borderLeft: tab===t.id ? "3px solid #C8873A" : "3px solid transparent",
-              border:"none", padding:"13px 0", fontSize:20, textAlign:"center", cursor:"pointer",
-            }}>{t.icon}</button>
+            <button key={t.id} onClick={()=>setTab(t.id)} title={t.label} style={{background:tab===t.id?"#FFF3E6":"transparent",borderLeft:tab===t.id?"3px solid #C8873A":"3px solid transparent",border:"none",padding:"13px 0",fontSize:20,textAlign:"center",cursor:"pointer"}}>{t.icon}</button>
           ))}
         </div>
         <div style={{flex:1,overflowY:"auto",padding:"16px"}}>
@@ -1377,14 +1381,14 @@
 
   // ── ROOT APP ──────────────────────────────────────────────────────
   function App() {
-    const [mode, setMode]             = useState("server");
+    const [mode, setMode]               = useState("server");
     const [pinUnlocked, setPinUnlocked] = useState(false);
-    const [loading, setLoading]       = useState(true);
-    const [inventory, setInventory]   = useState([]);
-    const [orders, setOrders]         = useState([]);
-    const [bills, setBills]           = useState([]);
-    const [settings, setSettings]     = useState(DEFAULT_SETTINGS);
-    const { toasts, toast }           = useToast();
+    const [loading, setLoading]         = useState(true);
+    const [inventory, setInventory]     = useState([]);
+    const [orders, setOrders]           = useState([]);
+    const [bills, setBills]             = useState([]);
+    const [settings, setSettings]       = useState(DEFAULT_SETTINGS);
+    const { toasts, toast }             = useToast();
 
     const tables = useMemo(() =>
       settings.tables?.split(",").map(t=>t.trim()).filter(Boolean) || [],
@@ -1407,17 +1411,14 @@
     useEffect(() => {
       const load = async () => {
         try {
-          // One-time safety check: repair the "orders" sheet header row if it's
-          // stale/out of order from an earlier version of this sheet/script.
-          // This does NOT touch existing data rows — see ensureOrderHeaders()
-          // in the Apps Script backend for details.
-          gasGet("fixOrdersHeaders").catch(() => {});
+          gasGet("fixOrdersHeaders").catch(()=>{});
+          gasGet("fixInventoryHeaders").catch(()=>{});
           const [invRes, ordRes, billRes, settRes] = await Promise.all([
             gasGet("getInventory"), gasGet("getOrders"), gasGet("getBills"), gasGet("getSettings"),
           ]);
-          if (invRes.success && invRes.data?.length)   setInventory(invRes.data.map(mapInvRow));
-          if (ordRes.success && ordRes.data?.length)   setOrders(ordRes.data.map(mapOrderRow));
-          if (billRes.success && billRes.data?.length) setBills(billRes.data.map(mapBillRow));
+          if (invRes.success  && invRes.data?.length)   setInventory(invRes.data.map(mapInvRow));
+          if (ordRes.success  && ordRes.data?.length)   setOrders(ordRes.data.map(mapOrderRow));
+          if (billRes.success && billRes.data?.length)  setBills(billRes.data.map(mapBillRow));
           if (settRes.success && Object.keys(settRes.data||{}).length) setSettings(s => ({...s,...settRes.data}));
         } catch(e) { toast("Could not reach server","info"); }
         setLoading(false);
@@ -1465,7 +1466,6 @@
       el.textContent = (e.message || "Script failed to load") + (e.filename ? " — " + e.filename.split("/").pop() : "");
     }
   });
-  // If Babel never fires after 8s, show hint
   setTimeout(function() {
     var init = document.getElementById("vb-init");
     if (init && init.style.display !== "none") {
