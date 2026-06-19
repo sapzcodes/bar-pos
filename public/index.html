@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
-  <title>Velvet Barrel POS</title>
+  <title>Pushpam A/C Bar POS</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
@@ -52,7 +52,7 @@
   </style>
 </head>
 <body>
-<div id="root"><div id="vb-init" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;gap:12px"><div style="font-family:Georgia,serif;font-size:28px;color:#C8873A;letter-spacing:4px">VELVET BARREL</div><div style="color:#aaa;font-size:13px">Starting up...</div><div id="vb-err" style="display:none;margin-top:8px;padding:12px 16px;background:#FFF0F0;border-radius:8px;color:#E74C3C;font-size:12px;max-width:320px;text-align:center"></div></div></div>
+<div id="root"><div id="vb-init" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;gap:12px"><div style="font-family:Georgia,serif;font-size:28px;color:#C8873A;letter-spacing:4px">Pushpam A/C Bar</div><div style="color:#aaa;font-size:13px">Starting up...</div><div id="vb-err" style="display:none;margin-top:8px;padding:12px 16px;background:#FFF0F0;border-radius:8px;color:#E74C3C;font-size:12px;max-width:320px;text-align:center"></div></div></div>
 <div id="print-area" style="display:none"></div>
 
 <script type="text/babel">
@@ -61,7 +61,7 @@
   const GAS = "/api/gas";
 
   const DEFAULT_SETTINGS = {
-    barName:"VELVET BARREL", barAddress:"", gstNumber:"", gstRate:18,
+    barName:"Pushpam A/C Bar", barAddress:"", gstNumber:"", gstRate:18,
     gstInclusive: false,
     tables:"T1,T2,T3,T4,T5,T6,T7,T8", currency:"₹",
     githubOwner:"", githubRepo:"", githubToken:"", logoPath:"",
@@ -214,7 +214,7 @@
         .footer { text-align: center; color: #888; font-size: 10px; padding: 10px; border-top: 1px dashed #ccc; margin-top: 8px; }
       </style>
       <div class="header">
-        <h1>${settings.barName || "VELVET BARREL"}</h1>
+        <h1>${settings.barName || "Pushpam A/C Bar"}</h1>
         <p>${settings.barAddress || ""}</p>
         <p>GSTIN: ${settings.gstNumber || ""}</p>
       </div>
@@ -315,7 +315,7 @@
   function LoadingScreen() {
     return (
       <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100vh",background:"#F7F8FA",gap:16}}>
-        <div style={{fontFamily:"'Bebas Neue',cursive",fontSize:32,color:"#C8873A",letterSpacing:3}}>VELVET BARREL</div>
+        <div style={{fontFamily:"'Bebas Neue',cursive",fontSize:32,color:"#C8873A",letterSpacing:3}}>Pushpam A/C Bar</div>
         <div style={{color:"#888",fontSize:13}}>Loading...</div>
       </div>
     );
@@ -325,7 +325,7 @@
   function TopBar({ mode, setMode, barName }) {
     return (
       <div style={{background:"#FFFFFF",borderBottom:"1px solid #EBEBF5",padding:"0 16px",height:58,display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:100,boxShadow:"0 1px 8px rgba(0,0,0,0.06)"}}>
-        <div style={{fontFamily:"'Bebas Neue',cursive",fontSize:22,color:"#C8873A",letterSpacing:2}}>{barName||"VELVET BARREL"}</div>
+        <div style={{fontFamily:"'Bebas Neue',cursive",fontSize:22,color:"#C8873A",letterSpacing:2}}>{barName||"Pushpam A/C Bar"}</div>
         <div style={{display:"flex",gap:8}}>
           {["server","dashboard"].map(m => (
             <button key={m} onClick={() => setMode(m)} style={{background:mode===m?"#C8873A":"#F0F0F5",color:mode===m?"#FFFFFF":"#888",border:"none",borderRadius:10,padding:"9px 18px",fontSize:12,fontWeight:700,textTransform:"uppercase",letterSpacing:1}}>
