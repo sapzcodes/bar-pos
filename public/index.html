@@ -419,14 +419,14 @@
             style={{
               position: "fixed",
               top: 70,
-              right: 16,
               left: 16,
               zIndex: 9999,
               display: "flex",
               flexDirection: "column",
               gap: 8,
+              maxWidth: "calc(100% - 32px)",
               pointerEvents: "none",
-              alignItems: "center",
+              alignItems: "flex-start",
             }}
           >
             {toasts.map((t) => (
