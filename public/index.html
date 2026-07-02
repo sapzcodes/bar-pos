@@ -206,7 +206,23 @@
         const ml = +mlPerBottle || 750;
         return Math.round((+priceBottle / (ml / 30)) * 100) / 100;
       }
+      // Bottle-equivalent used by one cart line (mirrors backend calcBottlesUsed)
+      function cartLineBottles(unit, qty, mlPerBottle) {
+        if (unit === "bottle") return qty;
+        const mlPerShot = unit === "large" ? 60 : 30;
+        return (qty * mlPerShot) / (mlPerBottle || 750);
+      }
 
+      // Total bottle-equivalents currently sitting in the cart for one item id
+      function bottlesInCart(cart, itemId) {
+        return cart
+          .filter((c) => c.itemId === itemId)
+          .reduce(
+            (sum, c) =>
+              sum + cartLineBottles(c.unit, c.qty, c.mlPerBottle || 750),
+            0,
+          );
+      }
       // GST helpers
       function getGstRate(settings) {
         return (+settings.gstRate || 18) / 100;
@@ -1044,8 +1060,9 @@
                   onAdd(item, qty, unit);
                   setQty(1);
                 }}
+                disabled={+item.qtyAvailable <= 0}
                 style={{
-                  background: "#C8873A",
+                  background: +item.qtyAvailable <= 0 ? "#E0E0EE" : "#C8873A",
                   border: "none",
                   color: "#FFF",
                   padding: "8px 14px",
@@ -1054,9 +1071,10 @@
                   fontWeight: 700,
                   whiteSpace: "nowrap",
                   minHeight: 36,
+                  cursor: +item.qtyAvailable <= 0 ? "not-allowed" : "pointer",
                 }}
               >
-                ADD
+                {+item.qtyAvailable <= 0 ? "OUT" : "ADD"}
               </button>
             </div>
           </Card>
@@ -1222,6 +1240,25 @@
           } else {
             price = priceBottle;
           }
+
+          // ── STOCK CHECK ──────────────────────────────────────────────
+          const requestedBottles = cartLineBottles(unit, qty, item.mlPerBottle);
+          const alreadyInCart = bottlesInCart(cart, item.id);
+          const available = +item.qtyAvailable || 0;
+          if (alreadyInCart + requestedBottles > available + 1e-9) {
+            const remaining = Math.max(0, available - alreadyInCart);
+            if (remaining <= 0) {
+              toast(`${item.name} is out of stock`, "error");
+            } else {
+              toast(
+                `Only ${bottlesToDisplay(remaining)} of ${item.name} left in stock`,
+                "error",
+              );
+            }
+            return;
+          }
+          // ─────────────────────────────────────────────────────────────
+
           const key = `${item.id}-${unit}`;
           setCart((prev) => {
             const ex = prev.find((c) => c.key === key);
@@ -1242,6 +1279,7 @@
                 unitPrice: price,
                 lineTotal: price * qty,
                 category: item.category,
+                mlPerBottle: item.mlPerBottle,
               },
             ];
           });
@@ -1251,17 +1289,36 @@
         const removeFromCart = (key) =>
           setCart((p) => p.filter((c) => c.key !== key));
         const updateCartQty = (key, delta) =>
-          setCart((p) =>
-            p.map((c) =>
+          setCart((prev) => {
+            const line = prev.find((c) => c.key === key);
+            if (!line) return prev;
+            const newQty = Math.max(1, line.qty + delta);
+            if (delta > 0) {
+              const invItem = inventory.find((i) => i.id === line.itemId);
+              const available = +invItem?.qtyAvailable || 0;
+              const otherLinesBottles = bottlesInCart(
+                prev.filter((c) => c.key !== key),
+                line.itemId,
+              );
+              const newLineBottles = cartLineBottles(
+                line.unit,
+                newQty,
+                line.mlPerBottle || 750,
+              );
+              if (otherLinesBottles + newLineBottles > available + 1e-9) {
+                toast(
+                  `Only ${bottlesToDisplay(available)} of ${line.name} in stock`,
+                  "error",
+                );
+                return prev;
+              }
+            }
+            return prev.map((c) =>
               c.key === key
-                ? {
-                    ...c,
-                    qty: Math.max(1, c.qty + delta),
-                    lineTotal: Math.max(1, c.qty + delta) * c.unitPrice,
-                  }
+                ? { ...c, qty: newQty, lineTotal: newQty * c.unitPrice }
                 : c,
-            ),
-          );
+            );
+          });
 
         const rawSubtotal = cart.reduce((a, c) => a + c.lineTotal, 0);
         const { subtotal, gstAmount, total } = calcTotals(
